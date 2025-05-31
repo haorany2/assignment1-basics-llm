@@ -1,5 +1,5 @@
 import regex as re
-from token_base import Tokenizer, run_parallel_tokenization, merge, get_contigent_stats
+from token_base import Tokenizer, run_parallel_tokenization, merge, get_contigent_stats, iter_corpus
 
 
 # the main GPT text split patterns, see
@@ -20,11 +20,12 @@ class RegexTokenizer(Tokenizer):
         self.compiled_pattern = re.compile(self.pattern)
         self.special_tokens = {}
         self.inverse_special_tokens = {}
-        self.register_special_tokens({'<|endoftext|>': 100257})
+        #self.register_special_tokens({'<|endoftext|>': 100257})
 
-    def train(self, path, vocab_size, num_processes=None, verbose=False):
+    def train(self, path, vocab_size, num_processes=None, verbose=False, special_tokens={'<|endoftext|>': 100257}):
         assert vocab_size >= 256
         num_merges = vocab_size - 256
+        self.register_special_tokens(special_tokens)
 
         # # input text preprocessing
         #print(list(self.special_tokens.keys)[0].encode("utf-8"))
@@ -32,8 +33,10 @@ class RegexTokenizer(Tokenizer):
         contigent_bytes_freq = None
         pair_position = None
         # iteratively merge the most common pairs to create new tokens
-        merges = {} # (int, int) -> int
+        #merges = {} # (int, int) -> int
+        merges = []
         vocab = {idx: bytes([idx]) for idx in range(256)} # idx -> bytes
+        reverse_vocab = {bytes([idx]):idx for idx in range(256)}
         for i in range(num_merges):
             # count the number of times every consecutive pair appears
             #stats = {}
@@ -52,21 +55,54 @@ class RegexTokenizer(Tokenizer):
             #ids = [merge(chunk_ids, pair, idx) for chunk_ids in ids]
             words_freq, contigent_bytes_freq, pair_position = merge(words_freq, pair, contigent_bytes_freq, pair_position)
             # save the merge
-            merges[pair] = idx
+            #merges[pair] = idx
+            merges.append((pair[0] ,  pair[1]))
             vocab[idx] = pair[0] + pair[1]
+            reverse_vocab[pair[0] + pair[1]] = idx
             # prints
             if verbose:
                 print(f"merge {i+1}/{num_merges}: {pair} -> {idx} ({vocab[idx]}) had {pair_counts} occurrences")
 
         # save class variables
-        self.merges = merges # used in encode()
+        self.merges = merges 
+        self.reverse_vocab = reverse_vocab # used in encode()
         self.vocab = vocab   # used in decode()
+        
+        return self.merges , self.vocab, self.reverse_vocab
 
     def register_special_tokens(self, special_tokens):
         # special_tokens is a dictionary of str -> int
         # example: {"<|endoftext|>": 100257}
         self.special_tokens = special_tokens
         self.inverse_special_tokens = {v: k for k, v in special_tokens.items()}
+
+    def encode(self, text, merges, vocab, reverse_vocab, special_tokens={'<|endoftext|>': 100257}):
+        corpus_iters = iter_corpus(text, list(self.special_tokens.keys())[0].encode("utf-8"))
+        for each_corpus in corpus_iters:
+            #print('each_corpus', each_corpus)
+            corpus_lst = re.finditer(GPT2_SPLIT_PATTERN, each_corpus)
+            #print('corpus_lst', corpus_lst)
+            for match in corpus_lst:
+                word = match.group(0)
+                word_bytes = word.encode("utf-8") 
+                word_bytes_lst = [bytes([b]) for b in word_bytes]
+                for merge_pair in merges:
+                    i=0
+                    while i < len(word_bytes_lst) - 1:
+                        if (word_bytes_lst[i], byte_list[i + 1]) == merge_pair:
+                            merged = word_bytes_lst[i] + word_bytes_lst[i + 1]
+                            word_bytes_lst = word_bytes_lst[:i] + [merged] + word_bytes_lst[i + 2:]
+                            # Stay at i to check for new potential match just formed
+                            if i > 0:
+                                i -= 1
+                        else:
+                            i += 1
+
+
+       
+        
+
+
 
     def decode(self, ids):
         # given ids (list of integers), return Python string
