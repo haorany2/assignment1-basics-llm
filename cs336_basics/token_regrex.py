@@ -76,7 +76,44 @@ class RegexTokenizer(Tokenizer):
         self.special_tokens = special_tokens
         self.inverse_special_tokens = {v: k for k, v in special_tokens.items()}
 
-    def encode(self, text_iter, merges, vocab, reverse_vocab, special_tokens={'<|endoftext|>': 100257}):
+
+    def encode(self, text, merges, vocab, reverse_vocab, special_tokens={'<|endoftext|>': 100257}):
+        if not self.special_tokens:
+            self.register_special_tokens(special_tokens)
+        spec_token = list(self.special_tokens.keys())[0]
+        spec_token_idx = self.special_tokens[spec_token]
+        encoded_lst = []
+        corpus_iters = iter_corpus(text, spec_token.encode("utf-8"))
+        for each_corpus in corpus_iters:
+            #print('each_corpus', each_corpus)
+            corpus_lst = re.finditer(GPT2_SPLIT_PATTERN, each_corpus)
+            #print('corpus_lst', corpus_lst)
+            for match in corpus_lst:
+                word = match.group(0)
+                word_bytes = word.encode("utf-8") 
+                word_bytes_lst = [bytes([b]) for b in word_bytes]
+                
+                for merge_pair in merges:
+                    word_bytes_lst_temp = []
+                    i=0
+                    while i < len(word_bytes_lst) :
+                        if word_bytes_lst[i]==merge_pair[0] and i+1<len(word_bytes_lst) and word_bytes_lst[i+1]==merge_pair[1] :#(word_bytes_lst[i], word_bytes_lst[i + 1]) == merge_pair:
+                            merged = word_bytes_lst[i] + word_bytes_lst[i + 1]
+                            word_bytes_lst_temp.append(merged)
+                            i += 2
+                            # Stay at i to check for new potential match just formed
+                        
+                        else:
+                            word_bytes_lst_temp.append(word_bytes_lst[i])
+                            i += 1
+                    
+                    word_bytes_lst = word_bytes_lst_temp
+                for b in word_bytes_lst:
+                    encoded_lst.append(self.reverse_vocab[b]) 
+                #word_encoded_lst = [self.reverse_vocab(b) for b in word_bytes_lst]
+            encoded_lst.append(spec_token_idx)
+
+    def encode_iter(self, text_iter, merges, vocab, reverse_vocab, special_tokens={'<|endoftext|>': 100257}):
         if not self.special_tokens:
             self.register_special_tokens(special_tokens)
         spec_token = list(self.special_tokens.keys())[0]
@@ -111,7 +148,18 @@ class RegexTokenizer(Tokenizer):
                         yield self.reverse_vocab[b]
                     #word_encoded_lst = [self.reverse_vocab(b) for b in word_bytes_lst]
                 yield spec_token_idx
-    def decode(self, )
+    def decode(self, ids):
+        part_bytes = []
+        for id in ids:
+            if id in self.vocab:
+                part_bytes.append(self.vocab[id])
+            elif id in self.inverse_special_tokens:
+                part_bytes.append(self.inverse_special_tokens[id].encode("utf-8"))
+            else:
+                raise ValueError(f"invalid token id: {id}")
+        text_bytes = b"".join(part_bytes)
+        text = text_bytes.decode("utf-8", errors="replace")
+        return text
                 
 
 
@@ -120,91 +168,91 @@ class RegexTokenizer(Tokenizer):
 
 
 
-    def decode(self, ids):
-        # given ids (list of integers), return Python string
-        part_bytes = []
-        for idx in ids:
-            if idx in self.vocab:
-                part_bytes.append(self.vocab[idx])
-            elif idx in self.inverse_special_tokens:
-                part_bytes.append(self.inverse_special_tokens[idx].encode("utf-8"))
-            else:
-                raise ValueError(f"invalid token id: {idx}")
-        text_bytes = b"".join(part_bytes)
-        text = text_bytes.decode("utf-8", errors="replace")
-        return text
+    # def decode(self, ids):
+    #     # given ids (list of integers), return Python string
+    #     part_bytes = []
+    #     for idx in ids:
+    #         if idx in self.vocab:
+    #             part_bytes.append(self.vocab[idx])
+    #         elif idx in self.inverse_special_tokens:
+    #             part_bytes.append(self.inverse_special_tokens[idx].encode("utf-8"))
+    #         else:
+    #             raise ValueError(f"invalid token id: {idx}")
+    #     text_bytes = b"".join(part_bytes)
+    #     text = text_bytes.decode("utf-8", errors="replace")
+    #     return text
 
-    def _encode_chunk(self, text_bytes):
-        # return the token ids
-        # let's begin. first, convert all bytes to integers in range 0..255
-        ids = list(text_bytes)
-        while len(ids) >= 2:
-            # find the pair with the lowest merge index
-            stats = get_stats(ids)
-            pair = min(stats, key=lambda p: self.merges.get(p, float("inf")))
-            # subtle: if there are no more merges available, the key will
-            # result in an inf for every single pair, and the min will be
-            # just the first pair in the list, arbitrarily
-            # we can detect this terminating case by a membership check
-            if pair not in self.merges:
-                break # nothing else can be merged anymore
-            # otherwise let's merge the best pair (lowest merge index)
-            idx = self.merges[pair]
-            ids = merge(ids, pair, idx)
-        return ids
+    # def _encode_chunk(self, text_bytes):
+    #     # return the token ids
+    #     # let's begin. first, convert all bytes to integers in range 0..255
+    #     ids = list(text_bytes)
+    #     while len(ids) >= 2:
+    #         # find the pair with the lowest merge index
+    #         stats = get_stats(ids)
+    #         pair = min(stats, key=lambda p: self.merges.get(p, float("inf")))
+    #         # subtle: if there are no more merges available, the key will
+    #         # result in an inf for every single pair, and the min will be
+    #         # just the first pair in the list, arbitrarily
+    #         # we can detect this terminating case by a membership check
+    #         if pair not in self.merges:
+    #             break # nothing else can be merged anymore
+    #         # otherwise let's merge the best pair (lowest merge index)
+    #         idx = self.merges[pair]
+    #         ids = merge(ids, pair, idx)
+    #     return ids
 
 
-    def encode_ordinary(self, text):
-        """Encoding that ignores any special tokens."""
-        # split text into chunks of text by categories defined in regex pattern
-        text_chunks = re.findall(self.compiled_pattern, text)
-        # all chunks of text are encoded separately, then results are joined
-        ids = []
-        for chunk in text_chunks:
-            chunk_bytes = chunk.encode("utf-8") # raw bytes
-            chunk_ids = self._encode_chunk(chunk_bytes)
-            ids.extend(chunk_ids)
-        return ids
+    # def encode_ordinary(self, text):
+    #     """Encoding that ignores any special tokens."""
+    #     # split text into chunks of text by categories defined in regex pattern
+    #     text_chunks = re.findall(self.compiled_pattern, text)
+    #     # all chunks of text are encoded separately, then results are joined
+    #     ids = []
+    #     for chunk in text_chunks:
+    #         chunk_bytes = chunk.encode("utf-8") # raw bytes
+    #         chunk_ids = self._encode_chunk(chunk_bytes)
+    #         ids.extend(chunk_ids)
+    #     return ids
 
-    def encode(self, text, allowed_special="none_raise"):
-        """
-        Unlike encode_ordinary, this function handles special tokens.
-        allowed_special: can be "all"|"none"|"none_raise" or a custom set of special tokens
-        if none_raise, then an error is raised if any special token is encountered in text
-        this is the default tiktoken behavior right now as well
-        any other behavior is either annoying, or a major footgun
-        """
-        # decode the user desire w.r.t. handling of special tokens
-        special = None
-        if allowed_special == "all":
-            special = self.special_tokens
-        elif allowed_special == "none":
-            special = {}
-        elif allowed_special == "none_raise":
-            special = {}
-            assert all(token not in text for token in self.special_tokens)
-        elif isinstance(allowed_special, set):
-            special = {k: v for k, v in self.special_tokens.items() if k in allowed_special}
-        else:
-            raise ValueError(f"allowed_special={allowed_special} not understood")
-        if not special:
-            # shortcut: if no special tokens, just use the ordinary encoding
-            return self.encode_ordinary(text)
-        # otherwise, we have to be careful with potential special tokens in text
-        # we handle special tokens by splitting the text
-        # based on the occurrence of any exact match with any of the special tokens
-        # we can use re.split for this. note that surrounding the pattern with ()
-        # makes it into a capturing group, so the special tokens will be included
-        special_pattern = "(" + "|".join(re.escape(k) for k in special) + ")"
-        special_chunks = re.split(special_pattern, text)
-        # now all the special characters are separated from the rest of the text
-        # all chunks of text are encoded separately, then results are joined
-        ids = []
-        for part in special_chunks:
-            if part in special:
-                # this is a special token, encode it separately as a special case
-                ids.append(special[part])
-            else:
-                # this is an ordinary sequence, encode it normally
-                ids.extend(self.encode_ordinary(part))
-        return ids
+    # def encode(self, text, allowed_special="none_raise"):
+    #     """
+    #     Unlike encode_ordinary, this function handles special tokens.
+    #     allowed_special: can be "all"|"none"|"none_raise" or a custom set of special tokens
+    #     if none_raise, then an error is raised if any special token is encountered in text
+    #     this is the default tiktoken behavior right now as well
+    #     any other behavior is either annoying, or a major footgun
+    #     """
+    #     # decode the user desire w.r.t. handling of special tokens
+    #     special = None
+    #     if allowed_special == "all":
+    #         special = self.special_tokens
+    #     elif allowed_special == "none":
+    #         special = {}
+    #     elif allowed_special == "none_raise":
+    #         special = {}
+    #         assert all(token not in text for token in self.special_tokens)
+    #     elif isinstance(allowed_special, set):
+    #         special = {k: v for k, v in self.special_tokens.items() if k in allowed_special}
+    #     else:
+    #         raise ValueError(f"allowed_special={allowed_special} not understood")
+    #     if not special:
+    #         # shortcut: if no special tokens, just use the ordinary encoding
+    #         return self.encode_ordinary(text)
+    #     # otherwise, we have to be careful with potential special tokens in text
+    #     # we handle special tokens by splitting the text
+    #     # based on the occurrence of any exact match with any of the special tokens
+    #     # we can use re.split for this. note that surrounding the pattern with ()
+    #     # makes it into a capturing group, so the special tokens will be included
+    #     special_pattern = "(" + "|".join(re.escape(k) for k in special) + ")"
+    #     special_chunks = re.split(special_pattern, text)
+    #     # now all the special characters are separated from the rest of the text
+    #     # all chunks of text are encoded separately, then results are joined
+    #     ids = []
+    #     for part in special_chunks:
+    #         if part in special:
+    #             # this is a special token, encode it separately as a special case
+    #             ids.append(special[part])
+    #         else:
+    #             # this is an ordinary sequence, encode it normally
+    #             ids.extend(self.encode_ordinary(part))
+    #     return ids
