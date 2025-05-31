@@ -31,8 +31,9 @@ class RegexTokenizer(Tokenizer):
         #print(list(self.special_tokens.keys)[0].encode("utf-8"))
         words_freq = run_parallel_tokenization(path, num_processes, list(self.special_tokens.keys())[0].encode("utf-8"))
         print('--------------Done words_freq')
-        contigent_bytes_freq = None
-        pair_position = None
+        contigent_bytes_freq, pair_position = get_contigent_stats(words_freq)
+        print('init contigent_bytes_freq', contigent_bytes_freq)
+     
         # iteratively merge the most common pairs to create new tokens
         #merges = {} # (int, int) -> int
         merges = []
@@ -45,20 +46,22 @@ class RegexTokenizer(Tokenizer):
             # for chunk_ids in ids:
             #     # passing in stats will update it in place, adding up counts
             #     get_stats(chunk_ids, stats)
-            if not contigent_bytes_freq:
-                contigent_bytes_freq, pair_position = get_contigent_stats(words_freq)
-                print('++done with contigent bytes dict')
+            # if not contigent_bytes_freq:
+            #     contigent_bytes_freq, pair_position = get_contigent_stats(words_freq)
+               
             # find the pair with the highest count
+            
             pair = max(contigent_bytes_freq, key=lambda p: (contigent_bytes_freq[p], p))
-            print('is find max taking forever????')
+            
             # for stats latter
             pair_counts = contigent_bytes_freq[pair]
             # mint a new token: assign it the next available id
             idx = 256 + i
             # replace all occurrences of pair in ids with idx
             #ids = [merge(chunk_ids, pair, idx) for chunk_ids in ids]
-            print('before merge')
+            
             words_freq, contigent_bytes_freq, pair_position = merge(words_freq, pair, contigent_bytes_freq, pair_position)
+           
             # save the merge
             #merges[pair] = idx
             merges.append((pair[0] ,  pair[1]))
