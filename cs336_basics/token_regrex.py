@@ -30,6 +30,7 @@ class RegexTokenizer(Tokenizer):
         # # input text preprocessing
         #print(list(self.special_tokens.keys)[0].encode("utf-8"))
         words_freq = run_parallel_tokenization(path, num_processes, list(self.special_tokens.keys())[0].encode("utf-8"))
+        print('--------------Done words_freq')
         contigent_bytes_freq = None
         pair_position = None
         # iteratively merge the most common pairs to create new tokens
