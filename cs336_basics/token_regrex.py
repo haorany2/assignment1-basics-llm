@@ -112,6 +112,7 @@ class RegexTokenizer(Tokenizer):
                     encoded_lst.append(self.reverse_vocab[b]) 
                 #word_encoded_lst = [self.reverse_vocab(b) for b in word_bytes_lst]
             encoded_lst.append(spec_token_idx)
+        return encoded_lst
 
     def encode_iter(self, text_iter, merges, vocab, reverse_vocab, special_tokens={'<|endoftext|>': 100257}):
         if not self.special_tokens:
