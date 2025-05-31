@@ -1,5 +1,5 @@
 import regex as re
-from .token_base import Tokenizer, run_parallel_tokenization, merge, get_contigent_stats
+from token_base import Tokenizer, run_parallel_tokenization, merge, get_contigent_stats
 
 
 # the main GPT text split patterns, see
@@ -16,7 +16,7 @@ class RegexTokenizer(Tokenizer):
           example: {'<|endoftext|>': 100257}
         """
         super().__init__()
-        self.pattern = GPT4_SPLIT_PATTERN if pattern is None else pattern
+        self.pattern = GPT2_SPLIT_PATTERN if pattern is None else pattern
         self.compiled_pattern = re.compile(self.pattern)
         self.special_tokens = {}
         self.inverse_special_tokens = {}
@@ -27,8 +27,8 @@ class RegexTokenizer(Tokenizer):
         num_merges = vocab_size - 256
 
         # # input text preprocessing
-       
-        words_freq = run_parallel_tokenization(path, num_processes, self.special_tokens.keys[0].encode("utf-8"))
+        #print(list(self.special_tokens.keys)[0].encode("utf-8"))
+        words_freq = run_parallel_tokenization(path, num_processes, list(self.special_tokens.keys())[0].encode("utf-8"))
         contigent_bytes_freq = None
         pair_position = None
         # iteratively merge the most common pairs to create new tokens
