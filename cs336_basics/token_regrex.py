@@ -76,27 +76,43 @@ class RegexTokenizer(Tokenizer):
         self.special_tokens = special_tokens
         self.inverse_special_tokens = {v: k for k, v in special_tokens.items()}
 
-    def encode(self, text, merges, vocab, reverse_vocab, special_tokens={'<|endoftext|>': 100257}):
-        corpus_iters = iter_corpus(text, list(self.special_tokens.keys())[0].encode("utf-8"))
-        for each_corpus in corpus_iters:
-            #print('each_corpus', each_corpus)
-            corpus_lst = re.finditer(GPT2_SPLIT_PATTERN, each_corpus)
-            #print('corpus_lst', corpus_lst)
-            for match in corpus_lst:
-                word = match.group(0)
-                word_bytes = word.encode("utf-8") 
-                word_bytes_lst = [bytes([b]) for b in word_bytes]
-                for merge_pair in merges:
-                    i=0
-                    while i < len(word_bytes_lst) - 1:
-                        if (word_bytes_lst[i], byte_list[i + 1]) == merge_pair:
-                            merged = word_bytes_lst[i] + word_bytes_lst[i + 1]
-                            word_bytes_lst = word_bytes_lst[:i] + [merged] + word_bytes_lst[i + 2:]
-                            # Stay at i to check for new potential match just formed
-                            if i > 0:
-                                i -= 1
-                        else:
-                            i += 1
+    def encode(self, text_iter, merges, vocab, reverse_vocab, special_tokens={'<|endoftext|>': 100257}):
+        if not self.special_tokens:
+            self.register_special_tokens(special_tokens)
+        spec_token = list(self.special_tokens.keys())[0]
+        spec_token_idx = self.special_tokens[spec_token]
+        for text in text_iter:
+            corpus_iters = iter_corpus(text, spec_token.encode("utf-8"))
+            for each_corpus in corpus_iters:
+                #print('each_corpus', each_corpus)
+                corpus_lst = re.finditer(GPT2_SPLIT_PATTERN, each_corpus)
+                #print('corpus_lst', corpus_lst)
+                for match in corpus_lst:
+                    word = match.group(0)
+                    word_bytes = word.encode("utf-8") 
+                    word_bytes_lst = [bytes([b]) for b in word_bytes]
+                    
+                    for merge_pair in merges:
+                        word_bytes_lst_temp = []
+                        i=0
+                        while i < len(word_bytes_lst) :
+                            if word_bytes_lst[i]==merge_pair[0] and i+1<len(word_bytes_lst) and word_bytes_lst[i+1]==merge_pair[1] :#(word_bytes_lst[i], word_bytes_lst[i + 1]) == merge_pair:
+                                merged = word_bytes_lst[i] + word_bytes_lst[i + 1]
+                                word_bytes_lst_temp.append(merged)
+                                i += 2
+                                # Stay at i to check for new potential match just formed
+                            
+                            else:
+                                word_bytes_lst_temp.append(word_bytes_lst[i])
+                                i += 1
+                        
+                        word_bytes_lst = word_bytes_lst_temp
+                    for b in word_bytes_lst:
+                        yield self.reverse_vocab[b]
+                    #word_encoded_lst = [self.reverse_vocab(b) for b in word_bytes_lst]
+                yield spec_token_idx
+    def decode(self, )
+                
 
 
        
@@ -136,6 +152,7 @@ class RegexTokenizer(Tokenizer):
             idx = self.merges[pair]
             ids = merge(ids, pair, idx)
         return ids
+
 
     def encode_ordinary(self, text):
         """Encoding that ignores any special tokens."""
