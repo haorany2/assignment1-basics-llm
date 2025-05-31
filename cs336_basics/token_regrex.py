@@ -39,6 +39,7 @@ class RegexTokenizer(Tokenizer):
         vocab = {idx: bytes([idx]) for idx in range(256)} # idx -> bytes
         reverse_vocab = {bytes([idx]):idx for idx in range(256)}
         for i in range(num_merges):
+            print(f"-----num merges {i}")
             # count the number of times every consecutive pair appears
             #stats = {}
             # for chunk_ids in ids:
@@ -46,14 +47,17 @@ class RegexTokenizer(Tokenizer):
             #     get_stats(chunk_ids, stats)
             if not contigent_bytes_freq:
                 contigent_bytes_freq, pair_position = get_contigent_stats(words_freq)
+                print('++done with contigent bytes dict')
             # find the pair with the highest count
             pair = max(contigent_bytes_freq, key=lambda p: (contigent_bytes_freq[p], p))
+            print('is find max taking forever????')
             # for stats latter
             pair_counts = contigent_bytes_freq[pair]
             # mint a new token: assign it the next available id
             idx = 256 + i
             # replace all occurrences of pair in ids with idx
             #ids = [merge(chunk_ids, pair, idx) for chunk_ids in ids]
+            print('before merge')
             words_freq, contigent_bytes_freq, pair_position = merge(words_freq, pair, contigent_bytes_freq, pair_position)
             # save the merge
             #merges[pair] = idx
