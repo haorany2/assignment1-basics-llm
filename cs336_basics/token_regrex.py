@@ -29,7 +29,8 @@ class RegexTokenizer(Tokenizer):
         # # input text preprocessing
        
         words_freq = run_parallel_tokenization(path, num_processes, self.special_tokens.keys[0].encode("utf-8"))
-
+        contigent_bytes_freq = None
+        pair_position = None
         # iteratively merge the most common pairs to create new tokens
         merges = {} # (int, int) -> int
         vocab = {idx: bytes([idx]) for idx in range(256)} # idx -> bytes
@@ -39,19 +40,23 @@ class RegexTokenizer(Tokenizer):
             # for chunk_ids in ids:
             #     # passing in stats will update it in place, adding up counts
             #     get_stats(chunk_ids, stats)
-            get_contigent_stats(words_freq)
+            if not contigent_bytes_freq:
+                contigent_bytes_freq, pair_position = get_contigent_stats(words_freq)
             # find the pair with the highest count
-            pair = max(stats, key=stats.get)
+            pair = max(contigent_bytes_freq, key=lambda p: (contigent_bytes_freq[p], p))
+            # for stats latter
+            pair_counts = contigent_bytes_freq[pair]
             # mint a new token: assign it the next available id
             idx = 256 + i
             # replace all occurrences of pair in ids with idx
-            ids = [merge(chunk_ids, pair, idx) for chunk_ids in ids]
+            #ids = [merge(chunk_ids, pair, idx) for chunk_ids in ids]
+            words_freq, contigent_bytes_freq, pair_position = merge(words_freq, pair, contigent_bytes_freq, pair_position)
             # save the merge
             merges[pair] = idx
-            vocab[idx] = vocab[pair[0]] + vocab[pair[1]]
+            vocab[idx] = pair[0] + pair[1]
             # prints
             if verbose:
-                print(f"merge {i+1}/{num_merges}: {pair} -> {idx} ({vocab[idx]}) had {stats[pair]} occurrences")
+                print(f"merge {i+1}/{num_merges}: {pair} -> {idx} ({vocab[idx]}) had {pair_counts} occurrences")
 
         # save class variables
         self.merges = merges # used in encode()
