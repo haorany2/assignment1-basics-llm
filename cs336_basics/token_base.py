@@ -9,32 +9,50 @@ import unicodedata
 from concurrent.futures import ProcessPoolExecutor
 from collections import defaultdict
 import copy
+import regex as re
+import os
+from pretokenization_example import find_chunk_boundaries
+GPT2_SPLIT_PATTERN = r"""'(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+"""
+GPT4_SPLIT_PATTERN = r"""'(?i:[sdmt]|ll|ve|re)|[^\r\n\p{L}\p{N}]?+\p{L}+|\p{N}{1,3}| ?[^\s\p{L}\p{N}]++[\r\n]*|\s*[\r\n]|\s+(?!\S)|\s+"""
 
 # -----------------------------------------------------------------------------
 # a few helper functions useful for both BasicTokenizer and RegexTokenizer
 def iter_corpus(text: str, delimiter: str = r"<\|endoftext\|>"):
+    start = 0
     pattern = re.compile(rf'(.*?)\s*{delimiter}', re.DOTALL)
     for match in pattern.finditer(text):
         each_corpus = match.group(1).lstrip()
         if each_corpus:  # skip empty ones
             yield each_corpus
+        start = match.end()
+    # Yield trailing content if any
+    remaining = text[start:].strip()
+    if remaining:
+        yield remaining
 
-def get_pretoken_stats(corpus):
+def get_pretoken_stats(corpus_iter):
     counts = defaultdict(int)
-    for word in corpus:
-        word_bytes = word.encode("utf-8") 
-        key = tuple(bytes([b]) for b in word_bytes)
-        counts[key] += 1
+    for each_corpus in corpus_iter:
+        #print('each_corpus', each_corpus)
+        corpus_lst = re.finditer(GPT2_SPLIT_PATTERN, each_corpus)
+        #print('corpus_lst', corpus_lst)
+        for match in corpus_lst:
+            word = match.group(0)
+            word_bytes = word.encode("utf-8") 
+            key = tuple(bytes([b]) for b in word_bytes)
+            counts[key] += 1
     return counts
 def process_chunk(args):
     filename, start, end = args
     with open(filename, 'rb') as f:
         f.seek(start)
         chunk = f.read(end - start).decode("utf-8", errors="ignore")
+        #print('chunk::::', chunk)
         corpus_iter = iter_corpus(chunk)
         return get_pretoken_stats(corpus_iter)
 
 def merge_dicts(dicts):
+    #print('dicts', dicts)
     final = defaultdict(int)
     for d in dicts:
         for k, v in d.items():
@@ -65,74 +83,132 @@ def get_contigent_stats(words_freq):
     Optionally allows to update an existing dictionary of counts
     """
     contigent_bytes_freq = defaultdict(int) 
-    pair_position = defaultdict(list)
+    pair_position = defaultdict(set)
+    
     for word_bytes, freq in words_freq.items():
         for i, pair in enumerate(zip(word_bytes, word_bytes[1:])): # iterate consecutive elements
             contigent_bytes_freq[pair] += 1 * freq
-            pair_position[pair].append((word_bytes, i, i+1))  # contigent_bytes_freq key, pair position start, pair position end
+            #pair_position[pair].append((word_bytes, i, i+1))  # contigent_bytes_freq key, pair position start, pair position end
+            pair_position[pair].add(word_bytes)
 
-
-    #pair_position_final {pair: {word_bytes: [(start_pos, end_pos), ...]}}
-    pair_position_final = dict()
-    for pair, lst in pair_position.items():
-        pair_position_final[pair] = defaultdict(list)
-        for word_bytes, start, end in lst:
-            pair_position_final[pair][word_bytes].append((start, end))
+    # #pair_position_final {pair: {word_bytes: [(start_pos, end_pos), ...]}}
+    # pair_position_final = dict()
+    # for pair, lst in pair_position.items():
+    #     pair_position_final[pair] = defaultdict(set)
+    #     for word_bytes, start, end in lst:
+    #         pair_position_final[pair][word_bytes].add(start)
         
-    return contigent_bytes_freq, pair_position_final
+    #pair_position (pair, {words})
+    return contigent_bytes_freq, pair_position #pair_position_final
 
 
-def merge(words_freq, pair, contigent_bytes_freq, pair_position_final):
+def merge(words_freq, pair, contigent_bytes_freq, pair_position):
     """
     In the list of integers (ids), replace all consecutive occurrences
     of pair with the new integer token idx
     Example: ids=[h, e, l, l o], pair=(h, e) -> [he, l, l, o]
     """
-    change_dic = pair_position_final[pair]
-    new_pair_position_final = copy.deepcopy(pair_position_final)
-    del new_pair_position_final[pair]
+    change_words = pair_position[pair]
+    new_pair_position = copy.deepcopy(pair_position)
+    del new_pair_position[pair]
+    # new_pair_position_final = copy.deepcopy(pair_position_final)
+    # del new_pair_position_final[pair]
 
-    for word_bytes, pos_lst in change_dic.items():
+    for word_bytes in list(change_words):
         # refresh words_freq key based on change list
-        new_word_bytes = list(word_bytes)
-        new_word_bytes[start] = pair[0] + pair[1]
-        del new_word_bytes[end]
-        new_word_bytes = tuple(new_word_bytes)
-        # refresh words_freq 
+        i = 0
+        new_word_bytes = []
         wfreq = words_freq[word_bytes]
         del words_freq[word_bytes]
+        while i < len(word_bytes):
+            if word_bytes[i]==pair[0] and i < len(word_bytes) - 1 and word_bytes[i+1] == pair[1]:
+                new_word_bytes.append(word_bytes[i]+word_bytes[i+1])
+                contigent_bytes_freq[pair] -= wfreq
+                if contigent_bytes_freq[pair]==0:
+                    del contigent_bytes_freq[pair]
+
+                if i > 0:
+                    #update contigent_bytes_freq for contigent position
+                    contigent_bytes_freq[(word_bytes[i-1], word_bytes[i]+word_bytes[i+1])] +=wfreq
+                    contigent_bytes_freq[(word_bytes[i-1], word_bytes[i])]-=wfreq
+                    if contigent_bytes_freq[(word_bytes[i-1], word_bytes[i])]==0:
+                        del contigent_bytes_freq[(word_bytes[i-1], word_bytes[i])]
+                    # add old word_bytes temparary, latter will replace with new_word_bytes when it is ready
+                    new_pair_position[(word_bytes[i-1], word_bytes[i]+word_bytes[i+1])].add(word_bytes)
+                    new_pair_position[(word_bytes[i-1], word_bytes[i])].remove(word_bytes)
+
+                if i+1+1 < len(word_bytes) :
+                    #update contigent_bytes_freq for contigent position
+                    contigent_bytes_freq[(word_bytes[i]+word_bytes[i+1], word_bytes[i+2])] +=wfreq
+                    contigent_bytes_freq[(word_bytes[i+1], word_bytes[i+2])]-=wfreq
+                    if contigent_bytes_freq[(word_bytes[i+1], word_bytes[i+2])]==0:
+                        del contigent_bytes_freq[(word_bytes[i+1], word_bytes[i+2])]
+                    # add old word_bytes temparary, latter will replace with new_word_bytes when it is ready
+                    new_pair_position[(word_bytes[i]+word_bytes[i+1], word_bytes[i+2])].add(word_bytes)
+                    new_pair_position[(word_bytes[i+1], word_bytes[i+2])].remove(word_bytes)
+
+                i+=2
+            else:
+                new_word_bytes.append(word_bytes[i])
+                i+=1
+        new_word_bytes = tuple(new_word_bytes)
         words_freq[new_word_bytes] = wfreq
+        print('new_pair_position before', new_pair_position)
+        for each_pair in list(new_pair_position.keys()):
+            if len(new_pair_position[each_pair])==0:
+                del new_pair_position[each_pair]
+                continue
+            if word_bytes in new_pair_position[each_pair]:
+                new_pair_position[each_pair].remove(word_bytes)
+                new_pair_position[each_pair].add(new_word_bytes)
 
-        # refresh new_pair_position_final
-        new_pair_position_final[new_word_bytes] = defaultdict(list)
+       
+       
+        # new_word_bytes = list(word_bytes)
+        # new_word_bytes[start] = pair[0] + pair[1]
+        # del new_word_bytes[end]
+        # new_word_bytes = tuple(new_word_bytes)
+        # refresh words_freq 
         
-        for start, end in pos_lst:
-            # refresh contigent_bytes_freq 
-            contigent_bytes_freq[pair] -= wfreq
-            if start-1>=0:
-                contigent_bytes_freq[(new_word_bytes[start-1],new_word_bytes[start])] += wfreq
-                
-                # refresh new_pair_position_final
-                new_pair_position_final[new_word_bytes].append((new_word_bytes[start-1],new_word_bytes[start]))
-                    
-            if start+1<len(new_word_bytes):
-                contigent_bytes_freq[(new_word_bytes[start], new_word_bytes[start+1])] += wfreq
-                
-                # refresh new_pair_position_final
-                new_pair_position_final[new_word_bytes].append((new_word_bytes[start], new_word_bytes[start+1]))
         
-        # refresh new_pair_position_final
-        for each_pair, pos_dict in new_pair_position_final.items():
-            if word_bytes in pos_dict.keys():
-                del new_pair_position_final[each_pair][word_bytes]
-                if new_word_bytes not in new_pair_position_final[each_pair]:
-                    new_pair_position_final[each_pair][new_word_bytes] = defaultdict(list)
-        for i, new_pair in enumerate(zip(new_word_bytes, new_word_bytes[1:])):
-            new_pair_position_final[new_pair][new_word_bytes].append((i,i+1))
+       
+        
 
-    if contigent_bytes_freq[pair]==0:
-        del contigent_bytes_freq[pair]
-    return words_freq, contigent_bytes_freq, new_pair_position_final
+        # # # refresh new_pair_position_final
+        # # new_pair_position_final[new_word_bytes] = defaultdict(list)
+        
+        # for start in list(start_pos_set):
+            
+
+        #     # refresh contigent_bytes_freq 
+        #     contigent_bytes_freq[pair] -= wfreq
+        #     if start-1>=0:
+        #         contigent_bytes_freq[(new_word_bytes[start-1],new_word_bytes[start])] += wfreq
+                
+        #         # # refresh new_pair_position_final
+        #         # if new_word_bytes[start-1]+new_word_bytes[start] not in new_pair_position_final:
+        #         #     new_pair_position_final[new_word_bytes[start-1]+new_word_bytes[start]] = dict()
+        #         # new_pair_position_final[new_word_bytes[start-1]+new_word_bytes[start]][new_word_bytes].append((new_word_bytes[start-1],new_word_bytes[start]))
+        #         # past + pair  pair+next
+        #     if start+1<len(new_word_bytes):
+        #         contigent_bytes_freq[(new_word_bytes[start], new_word_bytes[start+1])] += wfreq
+                
+        #         # # refresh new_pair_position_final
+        #         # new_pair_position_final[new_word_bytes].append((new_word_bytes[start], new_word_bytes[start+1]))
+        
+        # # # refresh new_pair_position_final
+        # # for each_pair, pos_dict in new_pair_position_final.items():
+        # #     if word_bytes in pos_dict.keys():
+        # #         del new_pair_position_final[each_pair][word_bytes]
+        # #     if new_word_bytes not in new_pair_position_final[each_pair]:
+        # #         new_pair_position_final[each_pair][new_word_bytes] = defaultdict(set)
+        # # for i, new_pair in enumerate(zip(new_word_bytes, new_word_bytes[1:])):
+        # #     new_pair_position_final[new_pair][new_word_bytes].append((i,i+1))
+
+
+    # if contigent_bytes_freq[pair]==0:
+    #     del contigent_bytes_freq[pair]
+    return words_freq, contigent_bytes_freq, new_pair_position
 
 
     # i = 0
