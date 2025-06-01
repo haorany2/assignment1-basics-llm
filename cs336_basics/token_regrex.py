@@ -32,7 +32,7 @@ class RegexTokenizer(Tokenizer):
         words_freq = run_parallel_tokenization(path, num_processes, list(self.special_tokens.keys())[0].encode("utf-8"))
         print('--------------Done words_freq')
         contigent_bytes_freq, pair_position = get_contigent_stats(words_freq)
-        print('init contigent_bytes_freq', contigent_bytes_freq)
+        #print('init contigent_bytes_freq', contigent_bytes_freq)
      
         # iteratively merge the most common pairs to create new tokens
         #merges = {} # (int, int) -> int
@@ -40,7 +40,8 @@ class RegexTokenizer(Tokenizer):
         vocab = {idx: bytes([idx]) for idx in range(256)} # idx -> bytes
         reverse_vocab = {bytes([idx]):idx for idx in range(256)}
         for i in range(num_merges):
-            print(f"-----num merges {i}")
+            if i%100==0:
+                print(f"-----num merges {i}")
             # count the number of times every consecutive pair appears
             #stats = {}
             # for chunk_ids in ids:

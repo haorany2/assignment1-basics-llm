@@ -130,7 +130,7 @@ def merge(words_freq, pair, contigent_bytes_freq, pair_position):
     del new_pair_position[pair]
     # new_pair_position_final = copy.deepcopy(pair_position_final)
     # del new_pair_position_final[pair]
-    print("change_words len::::", len(list(change_words)))
+    #print("change_words len::::", len(list(change_words)))
     
     for word_bytes in list(change_words):
         # refresh words_freq key based on change list
@@ -138,7 +138,7 @@ def merge(words_freq, pair, contigent_bytes_freq, pair_position):
         new_word_bytes = []
         wfreq = words_freq[word_bytes]
         del words_freq[word_bytes]
-        print('current word', word_bytes, 'curr pair', pair)
+        #print('current word', word_bytes, 'curr pair', pair)
         # last_pairzero_pos = None
         while i < len(word_bytes):
 
